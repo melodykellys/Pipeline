@@ -1,74 +1,3 @@
-#this versions runs but fails to check all security cause: GitHub Actions automatically skips any downstream job that uses needs:  when the prerequisite job fails. Since Gitleaks failed the first job, GitHub skipped the SAST job.
-
-
-# name: DevSecOps Security Pipeline
-
-# on:
-#   push:
-#     branches: [ "main", "master" ]
-#   pull_request:
-#     branches: [ "main", "master" ]
-
-# permissions:
-#   contents: read
-#   security-events: write # Required for CodeQL to upload SARIF results
-
-# jobs:
-#   security-checks:
-#     name: Gitleaks & Dependency Scan
-#     runs-on: ubuntu-latest
-    
-#     steps:
-#       - name: Checkout Code
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 0
-
-#       # 1. SECRET DETECTION: Gitleaks
-#       - name: Run Gitleaks Secret Scanner
-#         uses: gitleaks/gitleaks-action@v2
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#           GITLEAKS_LICENSE: ""
-
-#       # 2. DEPENDENCY SCANNING: OSV-Scanner
-#       - name: Run OSV-Scanner
-#         uses: google/osv-scanner-action@v1
-#         with:
-#           scan-packages-snapshot: true
-
-#   sast-scan:
-#     name: SAST Analysis (Semgrep & CodeQL)
-#     runs-on: ubuntu-latest
-#     needs: security-checks # Runs after initial checks pass (or you can run them in parallel)
-    
-#     permissions:
-#       contents: read
-#       security-events: write
-#       actions: read
-
-#     steps:
-#       - name: Checkout Code
-#         uses: actions/checkout@v4
-
-#       # 3. STATIC ANALYSIS: Semgrep
-#       - name: Run Semgrep SAST
-#         uses: semgrep/semgrep-action@v1
-#         with:
-#           config: auto
-
-#       # 4. STATIC ANALYSIS: CodeQL
-#       - name: Initialize CodeQL
-#         uses: github/codeql-action/init@v3
-#         with:
-#           languages: python
-
-#       - name: Perform CodeQL Analysis
-#         uses: github/codeql-action/analyze@v3
-
-
-
-
 name: DevSecOps Security Pipeline
 
 on:
@@ -80,6 +9,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  actions: read
 
 jobs:
   security-checks:
@@ -106,12 +36,6 @@ jobs:
   sast-scan:
     name: SAST Analysis (Semgrep & CodeQL)
     runs-on: ubuntu-latest
-    # Removed 'needs: security-checks' so this runs independently in parallel
-
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
 
     steps:
       - name: Checkout Code
@@ -129,3 +53,33 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
+
+  dast-scan:
+    name: DAST Analysis (OWASP ZAP)
+    runs-on: ubuntu-latest
+    
+    # Spin up the vulnerable app container as a background service for ZAP to probe
+    services:
+      web:
+        image: python:3.13-slim
+        ports:
+          - 8000:8000
+        options: --name vuln-app-service
+        # For a complete build test in CI, you can also build from your Dockerfile or use a prebuilt image step
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Build and run the app locally within the runner for the DAST scan target
+      - name: Build and Run App Container
+        run: |
+          docker build -t vuln-app .
+          docker run -d -p 8000:8000 vuln-app
+          sleep 3 # Give uvicorn a moment to spin up
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:8000/'
+          fail_action: false # Set to true once you want ZAP alerts to fail the build
