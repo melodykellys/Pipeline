@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write # Required for CodeQL to upload SARIF results
 
 jobs:
   security-checks:
@@ -18,7 +19,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Needed for Gitleaks to scan git history
+          fetch-depth: 0
 
       # 1. SECRET DETECTION: Gitleaks
       - name: Run Gitleaks Secret Scanner
@@ -32,3 +33,32 @@ jobs:
         uses: google/osv-scanner-action@v1
         with:
           scan-packages-snapshot: true
+
+  sast-scan:
+    name: SAST Analysis (Semgrep & CodeQL)
+    runs-on: ubuntu-latest
+    needs: security-checks # Runs after initial checks pass (or you can run them in parallel)
+    
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 3. STATIC ANALYSIS: Semgrep
+      - name: Run Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: auto
+
+      # 4. STATIC ANALYSIS: CodeQL
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
